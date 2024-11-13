@@ -1,0 +1,273 @@
+Vamos a explicar el código línea por línea de manera detallada:
+
+### Importaciones:
+
+```python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import ast
+import uvicorn
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from fastapi import FastAPI, HTTPException
+from typing import List
+```
+
+1. **`import pandas as pd`**: Importa la librería **Pandas** con el alias `pd`, que es utilizada para manejar y analizar datos en formato tabular (como un DataFrame).
+   
+2. **`import numpy as np`**: Importa **NumPy** con el alias `np`, una librería de Python utilizada para trabajar con matrices y realizar cálculos matemáticos.
+
+3. **`import matplotlib.pyplot as plt`**: Importa **Matplotlib**, una librería de gráficos en 2D para crear visualizaciones. Aquí se importa con el alias `plt`.
+
+4. **`import seaborn as sns`**: Importa **Seaborn**, que es una librería para visualización de datos basada en **Matplotlib** y ofrece gráficos estadísticos más fáciles de usar.
+
+5. **`import ast`**: Importa el módulo **Abstract Syntax Trees (AST)**. Se utiliza para trabajar con cadenas de texto que representan estructuras de datos literales (listas, diccionarios, etc.) en Python.
+
+6. **`import uvicorn`**: Importa **Uvicorn**, un servidor ASGI para ejecutar aplicaciones web en Python, especialmente usado con **FastAPI**.
+
+7. **`from sklearn.feature_extraction.text import TfidfVectorizer`**: Importa **TfidfVectorizer** desde **scikit-learn**, una herramienta que convierte texto en una representación numérica (vectores) para ser procesada por algoritmos de machine learning.
+
+8. **`from sklearn.metrics.pairwise import cosine_similarity`**: Importa **cosine_similarity** desde **scikit-learn**, una función que calcula la similitud del coseno entre dos matrices.
+
+9. **`from fastapi import FastAPI, HTTPException`**: Importa **FastAPI**, un framework para crear aplicaciones web, y **HTTPException**, que permite lanzar errores HTTP personalizados.
+
+10. **`from typing import List`**: Importa **List** desde el módulo **typing**, que se usa para especificar que un argumento o retorno de función es una lista.
+
+---
+
+### Carga y visualización de datos:
+
+```python
+movies_data = pd.read_csv('movies_dataset_reducido.csv', low_memory=False)
+credits_data = pd.read_csv('credits_reducido.csv', low_memory=False)
+```
+
+- **`pd.read_csv('movies_dataset_reducido.csv', low_memory=False)`**: Lee el archivo CSV de películas (`movies_dataset_reducido.csv`) y lo carga en un DataFrame llamado `movies_data`. `low_memory=False` evita advertencias sobre el uso de poca memoria durante la carga de datos.
+- **`credits_data = pd.read_csv('credits_reducido.csv', low_memory=False)`**: Hace lo mismo para el archivo de créditos (`credits_reducido.csv`) y lo carga en el DataFrame `credits_data`.
+
+```python
+print("Movies Data Shape:", movies_data.shape)
+print("Credits Data Shape:", credits_data.shape)
+```
+
+- **`movies_data.shape`**: Muestra las dimensiones del DataFrame `movies_data` (número de filas y columnas).
+- **`credits_data.shape`**: Muestra las dimensiones del DataFrame `credits_data`.
+
+```python
+print("\nMovies Data Head:")
+print(movies_data.head())
+print("\nCredits Data Head:")
+print(credits_data.head())
+```
+
+- **`head()`**: Muestra las primeras 5 filas de cada DataFrame para obtener una vista preliminar de los datos.
+
+```python
+print("\nMovies Data Info:")
+movies_data.info()
+print("\nCredits Data Info:")
+credits_data.info()
+```
+
+- **`info()`**: Muestra un resumen de las columnas, el tipo de datos y el conteo de valores no nulos en cada DataFrame.
+
+---
+
+### Limpieza y transformación de datos:
+
+```python
+movies_data_cleaned = movies_data.dropna(subset=['release_date'])
+```
+
+- **`dropna(subset=['release_date'])`**: Elimina las filas de `movies_data` que tienen valores nulos en la columna `release_date`. El resultado se guarda en `movies_data_cleaned`.
+
+```python
+movies_data_cleaned['return'] = np.where(
+    (movies_data_cleaned['budget'] > 0),
+    movies_data_cleaned['revenue'] / movies_data_cleaned['budget'],
+    0)
+```
+
+- **`np.where`**: Crea una nueva columna `return` que calcula el retorno de la inversión de cada película, dividiendo los ingresos (`revenue`) entre el presupuesto (`budget`) si el presupuesto es mayor que 0. Si no, asigna un retorno de 0.
+
+```python
+movies_data_cleaned['release_date'] = pd.to_datetime(movies_data_cleaned['release_date'], errors='coerce')
+movies_data_cleaned['release_year'] = movies_data_cleaned['release_date'].dt.year
+```
+
+- **`pd.to_datetime()`**: Convierte la columna `release_date` a formato de fecha.
+- **`release_date.dt.year`**: Extrae solo el año de la fecha y lo guarda en una nueva columna `release_year`.
+
+```python
+movies_data_cleaned['budget'] = pd.to_numeric(movies_data_cleaned['budget'], errors='coerce')
+movies_data_cleaned['revenue'] = pd.to_numeric(movies_data_cleaned['revenue'], errors='coerce')
+movies_data_cleaned['return'] = np.where(movies_data_cleaned['budget'] > 0, movies_data_cleaned['revenue'] / movies_data_cleaned['budget'], 0)
+```
+
+- **`pd.to_numeric()`**: Convierte las columnas `budget` y `revenue` a valores numéricos, manejando errores convirtiéndolos a `NaN` si hay datos inválidos.
+
+```python
+columns_to_drop = ['video', 'imdb_id', 'adult', 'original_title', 'poster_path', 'homepage']
+movies_data_cleaned = movies_data_cleaned.drop(columns=columns_to_drop)
+```
+
+- **`drop(columns=columns_to_drop)`**: Elimina las columnas especificadas en `columns_to_drop` que no son necesarias para el análisis.
+
+---
+
+### Desanidar columnas:
+
+```python
+def desanidar_columna(columna):
+    try:
+        return ast.literal_eval(columna) if isinstance(columna, str) else []
+    except ValueError:
+        return []
+```
+
+- **`desanidar_columna`**: Función que convierte cadenas de texto que representan estructuras como listas o diccionarios en objetos de Python. Usa `ast.literal_eval` para convertir la cadena en un objeto literal. Si la conversión falla, devuelve una lista vacía.
+
+```python
+movies_data_cleaned['belongs_to_collection'] = movies_data_cleaned['belongs_to_collection'].apply(desanidar_columna)
+movies_data_cleaned['production_companies'] = movies_data_cleaned['production_companies'].apply(desanidar_columna)
+movies_data_cleaned['production_countries'] = movies_data_cleaned['production_countries'].apply(desanidar_columna)
+```
+
+- **`apply(desanidar_columna)`**: Aplica la función `desanidar_columna` a las columnas seleccionadas para desanidar las cadenas de texto.
+
+---
+
+### Fusión de datos:
+
+```python
+movies_data = movies_data.merge(credits_data, on='id')
+```
+
+- **`merge(credits_data, on='id')`**: Realiza una fusión entre los DataFrames `movies_data` y `credits_data` usando la columna `id` como clave común. Esto combina los datos de ambas tablas en una sola.
+
+---
+
+### Procesamiento de texto:
+
+```python
+movies_data['overview'] = movies_data['overview'].fillna('')
+```
+
+- **`fillna('')`**: Rellena los valores nulos en la columna `overview` con una cadena vacía.
+
+```python
+def obtener_informacion_principal(x, key):
+    try:
+        items = ast.literal_eval(x)
+        return ' '.join([d[key] for d in items if key in d])
+    except:
+        return ''
+```
+
+- **`obtener_informacion_principal`**: Función que extrae información de una lista de diccionarios (como el elenco o los géneros de una película) y devuelve una cadena de texto con los valores correspondientes a una clave dada (`key`).
+
+```python
+movies_data['actors'] = movies_data['cast'].apply(lambda x: obtener_informacion_principal(x, 'name'))
+movies_data['director'] = movies_data['crew'].apply(lambda x: obtener_informacion_principal(x, 'name') if 'Director' in x else '')
+movies_data['genres'] = movies_data['genres'].apply(lambda x: obtener_informacion_principal(x, 'name'))
+movies_data['production_companies'] = movies_data['production_companies'].apply(lambda x: obtener_informacion_principal(x, 'name'))
+```
+
+- Estas líneas aplican la función `obtener_informacion_principal` a diferentes columnas (como `cast`, `crew`, `genres`, etc.) para extraer los nombres de actores, directores, géneros y compañías de producción.
+
+```python
+movies_data['content'] = movies_data['overview'] +
+
+ ' ' + movies_data['genres'] + ' ' + \
+                         movies_data['actors'] + ' ' + movies_data['director'] + ' ' + \
+                         movies_data['production_companies']
+```
+
+- **`content`**: Crea una nueva columna `content` que combina el resumen de la película (`overview`), los géneros, actores, director y compañías de producción en una sola cadena de texto.
+
+---
+
+### Vectorización y cálculo de similitudes:
+
+```python
+tfidf = TfidfVectorizer(stop_words='english')
+tfidf_matrix = tfidf.fit_transform(movies_data['content'])
+```
+
+- **`TfidfVectorizer`**: Convierte el contenido de las películas en vectores numéricos usando la técnica **TF-IDF** (Term Frequency - Inverse Document Frequency), que da más peso a palabras que aparecen con frecuencia en un documento pero son raras en el conjunto de datos.
+- **`fit_transform`**: Ajusta el modelo a los datos y transforma las descripciones de las películas en una matriz numérica.
+
+```python
+cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
+```
+
+- **`cosine_similarity`**: Calcula la similitud del coseno entre los vectores TF-IDF de todas las películas, obteniendo una matriz de similitudes entre cada par de películas.
+
+---
+
+### Recomendación de películas:
+
+```python
+indices = pd.Series(movies_data.index, index=movies_data['title']).drop_duplicates()
+```
+
+- **`indices`**: Crea una serie donde el índice es el título de la película y el valor es la posición (índice) en el DataFrame, eliminando duplicados.
+
+```python
+def recomendar_peliculas(title, cosine_sim=cosine_sim, df=movies_data, indices=indices):
+    idx = indices[title]
+    sim_scores = list(enumerate(cosine_sim[idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    sim_scores = sim_scores[1:11]
+    movie_indices = [i[0] for i in sim_scores]
+    return df['title'].iloc[movie_indices]
+```
+
+- **`recomendar_peliculas`**: Función que recibe un título de película y devuelve las 10 películas más similares basándose en la similitud del coseno de sus descripciones. Se obtiene el índice de la película a partir del título y luego se ordenan las películas por su similitud.
+
+```python
+pelicula = "Toy Story"
+print(f"Películas recomendadas para '{pelicula}':\n")
+print(recomendar_peliculas(pelicula))
+```
+
+- **`recomendar_peliculas('Toy Story')`**: Muestra las películas recomendadas para "Toy Story".
+
+---
+
+### API con FastAPI:
+
+```python
+app = FastAPI()
+```
+
+- **`FastAPI()`**: Crea una aplicación FastAPI.
+
+```python
+@app.get("/")
+async def root():
+    return {"message": "Hello, World!"}
+```
+
+- **`@app.get("/")`**: Define un endpoint de la API que responde a solicitudes GET en la ruta `/`. Devuelve un mensaje básico.
+
+```python
+@app.get("/recomendar/{title}")
+def get_recommendations(title: str):
+    try:
+        recomendaciones = recomendar_peliculas(title)
+        return {"title": title, "recommendations": recomendaciones}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+```
+
+- **`@app.get("/recomendar/{title}")`**: Define un endpoint que recibe un título de película como parámetro y devuelve las recomendaciones de películas basadas en ese título.
+
+```python
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+- **`uvicorn.run`**: Ejecuta la aplicación FastAPI en el servidor Uvicorn, escuchando en el puerto 8000.
